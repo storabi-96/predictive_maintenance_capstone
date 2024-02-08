@@ -1,55 +1,95 @@
 # installing the libraries
-if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
-if(!require(caret))     install.packages("caret"    , repos = "http://cran.us.r-project.org")
-if(!require(ggExtra))   install.packages("ggExtra"  , repos = "http://cran.us.r-project.org")
-if(!require(corrplot))  install.packages("corrplot" , repos = "http://cran.us.r-project.org")
-if(!require(GGally))    install.packages("GGally"   , repos = "http://cran.us.r-project.org")
-if(!require(pROC))      install.packages("pROC"     , repos = "http://cran.us.r-project.org")
-if(!require(kernlab))   install.packages("kernlab"     , repos = "http://cran.us.r-project.org")
-
+if(!require(tidyverse)) install.packages("tidyverse" , repos = "http://cran.us.r-project.org")
+if(!require(caret    )) install.packages("caret"     , repos = "http://cran.us.r-project.org")
+if(!require(corrplot )) install.packages("corrplot"  , repos = "http://cran.us.r-project.org")
+if(!require(GGally   )) install.packages("GGally"    , repos = "http://cran.us.r-project.org")
+if(!require(ROCR     )) install.packages("ROCR"      , repos = "http://cran.us.r-project.org")
+if(!require(klaR     )) install.packages("klaR"      , repos = "http://cran.us.r-project.org")
+if(!require(xgboost  )) install.packages("xgboost"   , repos = "http://cran.us.r-project.org")
+if(!require(pROC     )) install.packages("pROC"      , repos = "http://cran.us.r-project.org")
 
 library(corrplot)
 library(tidyverse)
 library(caret)
-library(ggExtra)
 library(GGally)
+library(ROCR)
 library(pROC)
 
 ################################################################################
-################################################################################
+############### Defining functions to be used in script#########################
 ################################################################################
 
-create_ROC_curve <- function(actual, predicted_probabilities) {
-  # Calculate true positive rate (TPR) and false positive rate (FPR) for various thresholds
-  thresholds <- seq(0, 1, by = 0.01)
-  TPR <- numeric(length(thresholds))
-  FPR <- numeric(length(thresholds))
-  for (i in seq_along(thresholds)) {
-    threshold <- thresholds[i]
-    predicted <- ifelse(predicted_probabilities > threshold, 1, 0)
-    confusion <- table(predicted, actual)
-    if (sum(dim(confusion)) == 4) { # Both classes present in confusion matrix
-      TPR[i] <- confusion[2, 2] / (confusion[2, 2] + confusion[2, 1])
-      FPR[i] <- confusion[1, 2] / (confusion[1, 2] + confusion[1, 1])
-    } else { # One class missing in confusion matrix
-      TPR[i] <- NA
-      FPR[i] <- NA
-    }
-  }
-  
-  # Remove NA values
-  TPR <- TPR[!is.na(TPR)]
-  FPR <- FPR[!is.na(FPR)]
-  
-  # Plot ROC curve
-  plot(FPR, TPR, type = "l", lwd = 2, col = "blue", xlab = "False Positive Rate", ylab = "True Positive Rate",
-       main = "Receiver Operating Characteristic (ROC) Curve")
-  abline(0, 1, col = "red") # Add diagonal line for reference
-  text(0.5, 0.5, paste("AUC =", round(trapz(TPR, FPR), 3)), adj = c(0.5, 0.5), col = "red")
+get_ROC_performance <- function(model, df_test, target) {
+  # get probabilities
+  predicted_probs <- predict(model, newdata = df_test, type = "prob")[, "Failure"]
+  pred <- prediction(predicted_probs, as.factor(df_test[[target]]))
+  # get ROC
+  perf <- performance(pred, "tpr", "fpr")
+  return(perf)
 }
 
 ################################################################################
+get_confusion_matrix <- function(model, df_test, target) {
+  # make confusion matrix
+  cm <- confusionMatrix(predict(model, df_test),
+                        as.factor(df_test[[target]]))
+  cm
+}
+
+get_f1_score <- function(model, df_test, target) {
+  # make confusion matrix
+  my_cm <- get_confusion_matrix(model=model, 
+                                df_test=df_test, 
+                                target=target)
+  # extract F1 score from it
+  my_cm[["byClass"]][["F1"]]
+}
+
 ################################################################################
+train_model <- function(df_training, target,
+                        features, method, control){
+  # declare the formula (y ~ x1 + x2 + etc.)
+  formula <- as.formula(
+    paste(
+      target, "~", paste(features, collapse = " + ")))
+  
+  # train the model
+  model <- train(formula,
+                 data = df_training,
+                 method = method,
+                 trControl = control)
+  model
+}
+
+################################################################################
+plot_ROC_curves <- function(trained_models, model_names, df_test, target) {
+  
+  # Create an empty plot
+  plot(0, 0, type = "n", xlim = c(0, 1), ylim = c(0, 1), 
+       xlab = "False Positive Rate", ylab = "True Positive Rate", 
+       main = "ROC curves comparison")
+  
+  grid(col = "grey", lty = "dotted")
+  # Plot ROC curves for each model
+  for (i in seq_along(trained_models)) {
+    perf <- get_ROC_performance(trained_models[[i]], df_test, target)
+    auc <- round(as.numeric(perf@y.values[[1]]), 3)  # Extract AUC value
+    
+    # Extract TPR and FPR values
+    tpr <- perf@x.values[[1]]
+    fpr <- perf@y.values[[1]]
+    
+    # Plot ROC curve
+    lines(fpr, tpr, col = i, lwd = 2)
+  }
+  
+  # Add legend
+  legend("bottomright", legend = model_names, 
+         col = seq_along(trained_models), lwd = 2, cex = 0.8)
+}
+
+################################################################################
+################################# EDA ##########################################
 ################################################################################
 # load data set
 df_data <- read.csv("./data/predictive_maintenance.csv")
@@ -70,11 +110,7 @@ df_data <- df_data %>%
          "failure_type" = Failure.Type)
 
 # find number of failures and non failures in the data
-n_failure <- sum(df_data %>% 
-                   filter(failure_numeric==1) %>% 
-                   pull(failure_numeric))
-n_no_failure <- nrow(df_data) - n_failure
-
+table(df_data$failure)
 # crate the failure label column form 0 and 1 ==> no failure and failure
 df_data <- df_data %>%
   mutate(failure = ifelse(failure_numeric==1, "Failure", "No Failure"))
@@ -93,6 +129,7 @@ pair_plot <- ggpairs(df_pair,
                      lower = list(continuous = wrap("points", alpha = 0.2), 
                                   combo = "box_no_facet"),
                      diag = list(continuous = wrap("densityDiag", alpha = 0.2))) +
+  labs(title ="Feaure pair-wise relations grid plot") + 
   theme(axis.text.x = element_text(angle = 90,))
 
 # show pair plot
@@ -100,6 +137,29 @@ pair_plot
 
 # remove df_pair from environment as it's no longer needed
 rm(df_pair)
+
+# see number of different types of failure
+df_data %>% 
+  filter(failure_numeric==1) %>%
+  group_by(failure_type) %>% 
+  summarize(n_failure = n()) %>% 
+  mutate(failure_type=reorder(failure_type,n_failure)) %>%
+  ggplot(aes(x=failure_type, y=n_failure)) + 
+  geom_col(color = "steelblue", fill="blue3") + 
+  labs(x = "Failure type",
+       y = "Number of failures",
+       title ="Failure type vs Number of failures") + 
+  coord_flip()
+  
+# check if there are rows with recorded failure types but failure_numeric = 0
+nrow(df_data %>% 
+       filter(failure != "No Failure" & failure_numeric == 0))
+
+
+# reassign correct failure_numeric to the problematic rows
+df_data <- df_data %>% 
+  mutate(failure_numeric = ifelse(failure_type=="No Failure", 0, 1))
+
 
 # select columns for correlations plot
 df_corr <- df_data %>% 
@@ -114,49 +174,49 @@ ggcorr(df_corr, label = TRUE, label_round=3,
 # remove df_corr from environment as it's no longer needed
 rm(df_corr)
 
+################################################################################
+##############################  Modelling ######################################
+################################################################################
+
 # Split the data set into training and test sets
-test_indices <- createDataPartition(df_data$failure_numeric, 
-                                    times=1, p=0.2, list=FALSE)
+test_indices <- createDataPartition(df_data$failure, times=1, p=0.2, list=FALSE)
+test_set     <- df_data[test_indices, ]
+train_set    <- df_data[-test_indices,]
 
-test_set  <- df_data[test_indices,]
-train_set <- df_data[-test_indices,]
+# 5 fold cross validation
+ctrl <- trainControl(method = "cv", number = 5) 
 
-# train a decision tree, predict and get f1 score
-ctrl <- trainControl(method = "cv", number = 5) # 5 fold cross validation
-fit_dt <- train(failure ~ air_t + process_t + rpm + torque + wear + type,
-                data = train_set,
-                method = "rpart",
-                trControl = ctrl)
+# methods and respective names to train models
+methods      <- c("rpart", "rf", "lda2",  "qda", "nb", "xgbTree",  "LogitBoost")
+mehtod_names <- c("Decision tree", "Random forest", "LDA", "QDA", "Naive Bayes", 
+                  "XGBoost", "Boosted logistic regression")
 
-cm_dt <- confusionMatrix(predict(fit_dt, test_set), 
-                         as.factor(test_set$failure))
+# features to use for training and target to predict
+my_features <- c("air_t", "process_t", "rpm", "torque", "wear", "type")
+my_target   <- "failure"
 
-f1_dt <- cm_dt[["byClass"]][["F1"]]
+# train the models in lapply
+trained_models <- lapply(methods, function(method){
+  print(method)
+  model <- train_model(df_training=train_set, 
+              target=my_target,
+              features=my_features, 
+              method=method,
+              control=ctrl)
+  model
+})
 
-# train SVM classifier with radial basis kernel, predict and get f1score
-ctrl <- trainControl(method = "cv", number = 5) # 5 fold cross validation
-fit_svm <- train(failure ~ air_t + process_t + rpm + torque + wear + type, 
-                 data = train_set, 
-                 method = "svmRadial",
-                 trControl = ctrl)
-
-cm_svm <- confusionMatrix(predict(fit_svm, test_set), 
-                          as.factor(test_set$failure))
-
-f1_svm <- cm_svm[["byClass"]][["F1"]]
-
-# train a random forest, predict and get f1 score
-ctrl <- trainControl(method = "cv", number = 5) # 5 fold cross validation
-fit_rf <- train(failure ~ air_t + process_t + rpm + torque + wear + type,
-                data = train_set,
-                method = "rf",
-                trControl = ctrl)
-
-cm_rf <- confusionMatrix(predict(fit_rf, test_set), 
-                         as.factor(test_set$failure))
-
-f1_rf <- cm_rf[["byClass"]][["F1"]]
+# plot ROC curves
+plot_ROC_curves(trained_models=trained_models,
+                model_names=mehtod_names, 
+                df_test=test_set, 
+                target=my_target) 
 
 
-pred_probs <- predict(fit_rf, test_set, type = "prob")
+get_confusion_matrix(trained_models[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target="failure")
 
+get_confusion_matrix(trained_models[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target="failure")
