@@ -16,7 +16,7 @@ library(GGally)
 library(ROCR)
 library(pROC)
 library(smotefamily)
-#library(UBL)
+library(UBL)
 ################################################################################
 ############### Defining functions to be used in script#########################
 ################################################################################
@@ -62,7 +62,7 @@ train_model <- function(df_training, target,
 get_confusion_matrix <- function(model, df_test, target) {
   # make confusion matrix
   cm <- confusionMatrix(predict(model, df_test),
-                        as.factor(df_test[[target]]))
+                        df_test[[target]])
   cm
 }
 
@@ -79,7 +79,7 @@ get_f1_score <- function(model, df_test, target) {
 get_ROC_performance <- function(model, df_test, target) {
   # get probabilities
   predicted_probs <- predict(model, newdata = df_test, type = "prob")[, "No Failure"]
-  pred <- prediction(predicted_probs, as.factor(df_test[[target]]))
+  pred <- prediction(predicted_probs, df_test[[target]])
   # get tpr and fpr to plot ROC
   perf <- performance(pred, "tpr", "fpr")
   perf
@@ -103,7 +103,7 @@ get_tpr_at_x_fpr <- function(model, df_test, target, x=0.1) {
 get_precision_recall_performance <- function(model, df_test, target) {
   # get probabilities
   predicted_probs <- predict(model, newdata = df_test, type = "prob")[, "Failure"]
-  pred <- prediction(predicted_probs, as.factor(df_test[[target]]))
+  pred <- prediction(predicted_probs, df_test[[target]])
   
   # get precision and recall
   perf <- performance(pred, "prec", "rec")
@@ -165,13 +165,18 @@ plot_precision_recall_curves <- function(trained_models, model_names, df_test, t
 
 ################################################################################
 # Function to perform SMOTE on failure column
-smote_for_binary_target <- function(train_data, target_col, features_cols) {
+smote_for_binary_target <- function(train_data, target_col, positive_class,
+                                    apprx_subclass_pop, features_cols) {
   # Extract features and target variable
   train_features <- train_data[, features_cols]
   train_target <- train_data[[target_col]]
   
+  # find dupsize to pass into SMOTE function
+  dupsize <- apprx_subclass_pop/table(train_data[[target_col]])[[positive_class]]
+  
   # Perform SMOTE
-  df_smote <- SMOTE(train_features, target = train_target)$data
+  df_smote <- SMOTE(train_features, target = train_target, 
+                    dup_size = dupsize)$data
   
   # rename target column to original name
   df_smote <- df_smote %>% 
@@ -181,68 +186,134 @@ smote_for_binary_target <- function(train_data, target_col, features_cols) {
 }
 
 ################################################################################
-# Function to perform ADASYN on failure column
-adasyn_for_multi_target <- function(train_data, target_col, features_cols) {
-  # Extract features and target variable
+# Function to perform SMOTE on failure type, over sample based on type frequency
+smote_for_failure_type <- function(train_data, target_col, positive_class, 
+                                   subclass_type_col, features_cols,
+                                   apprx_subclass_pop) {
+  
+  # Extract features and target variables
   train_features <- train_data[, features_cols]
-  train_target <- train_data[[target_col]]
+  train_failure_type <- train_data[[subclass_type_col]]
   
-  # Perform ADASYN
-  df_adas <- ADAS(train_features, target = train_target)$data
+  # Calculate the frequency of each Failure type
+  failure_type_freq <- table(train_failure_type)
   
-  # rename target column to original name
-  df_adas <- df_adas %>% 
-    rename(!!target_col := class)
+  # most common item in the failure type column (No Failure)
+  majority_class <- names(which.max(failure_type_freq))
   
-  # bring back the binary failure column
-  df_adas$failure <- ifelse(df_adas[[target_col]] == "No Failure", 
-                            "No Failure", "Failure")
+  # Find minority Failure types, exclude the most common one (No Failure)
+  failure_types <- names(failure_type_freq[failure_type_freq != majority_class])
   
-  df_adas
+  # Perform SMOTE for each minority Failure type
+  df_smote <- list()
+  i <- 1
+  for (failure_type in failure_types) {
+    # Subset the data for the current Failure type
+    subset_data <- train_data[train_failure_type == failure_type |
+                                train_failure_type == majority_class, ]
+    
+    # find the correct dupsize based on the desired subclass population
+    dupsize <- apprx_subclass_pop/failure_type_freq[[failure_type]]
+    
+    # Perform SMOTE on the subset
+    smote_subset <- SMOTE(subset_data[, features_cols], 
+                          target = subset_data[[target_col]],
+                          dup_size = dupsize)
+    
+    # take the dataset with over-sampled minority and add a failure type column
+    df_smote_subclss <- smote_subset$data
+    df_smote_subclss[[subclass_type_col]] <- ifelse(
+      df_smote_subclss$class == positive_class, 
+      failure_type, majority_class)
+    
+    # Rename the class column to match the original target column name
+    df_smote_subclss <- df_smote_subclss %>% 
+      rename(!!target_col := class)
+    
+    # Combine SMOTE results for each Failure type
+    df_smote[[i]] <- df_smote_subclss
+    i <- i+1
+  }
+  
+  # Combine SMOTE results for all minority Failure types
+  df_smote <- do.call(rbind, df_smote)
+  
+  # remove duplicated rows due to majority class
+  df_smote <- distinct(df_smote)
+  
+  # make both target columns factors again
+  df_smote[[target_col]] <- as.factor(df_smote[[target_col]])
+  df_smote[[subclass_type_col]] <- as.factor(df_smote[[subclass_type_col]])
+  
+  # return the final dataframe
+  df_smote
 }
 
 ################################################################################
-# Function to perform ANS on failure column
-ans_for_multi_target <- function(train_data, target_col, features_cols) {
-  # Extract features and target variable
+# Function to perform DBSMOTE on failure type, over sample based on type frequency
+DBSMOTE_for_failure_type <- function(train_data, target_col, positive_class, 
+                                     subclass_type_col, features_cols,
+                                     apprx_subclass_pop) {
+  
+  # Extract features and target variables
   train_features <- train_data[, features_cols]
-  train_target <- train_data[[target_col]]
+  train_failure_type <- train_data[[subclass_type_col]]
   
-  # Perform ANS
-  df_ans <- ANS(train_features, target = train_target)$data
+  # Calculate the frequency of each Failure type
+  failure_type_freq <- table(train_failure_type)
   
-  # rename target column to original name
-  df_ans <- df_ans %>% 
-    rename(!!target_col := class)
+  # most common item in the failure type column (No Failure)
+  majority_class <- names(which.max(failure_type_freq))
   
-  # bring back the binary failure column
-  df_ans$failure <- ifelse(df_ans[[target_col]] == "No Failure",
-                           "No Failure", "Failure")
+  # Find minority Failure types, exclude the most common one (No Failure)
+  failure_types <- names(failure_type_freq[failure_type_freq != majority_class])
   
-  df_ans
+  # Perform SMOTE for each minority Failure type
+  df_smote <- list()
+  i <- 1
+  for (failure_type in failure_types) {
+    # Subset the data for the current Failure type
+    subset_data <- train_data[train_failure_type == failure_type |
+                                train_failure_type == majority_class, ]
+    
+    # find the correct dupsize based on the desired subclass population
+    dupsize <- apprx_subclass_pop/failure_type_freq[[failure_type]]
+    
+    # Perform SMOTE on the subset
+    smote_subset <- DBSMOTE(subset_data[, features_cols], 
+                            target = subset_data[[target_col]],
+                            dupSize = dupsize)
+                            #K = 5,
+                            #method="type2")
+    
+    # take the dataset with over-sampled minority and add a failure type column
+    df_smote_subclss <- smote_subset$data
+    df_smote_subclss[[subclass_type_col]] <- ifelse(
+      df_smote_subclss$class == positive_class, 
+      failure_type, majority_class)
+    
+    # Rename the class column to match the original target column name
+    df_smote_subclss <- df_smote_subclss %>% 
+      rename(!!target_col := class)
+    
+    # Combine SMOTE results for each Failure type
+    df_smote[[i]] <- df_smote_subclss
+    i <- i+1
+  }
+  
+  # Combine SMOTE results for all minority Failure types
+  df_smote <- do.call(rbind, df_smote)
+  
+  # remove duplicated rows due to majority class
+  df_smote <- distinct(df_smote)
+  
+  # make both target columns factors again
+  df_smote[[target_col]] <- as.factor(df_smote[[target_col]])
+  df_smote[[subclass_type_col]] <- as.factor(df_smote[[subclass_type_col]])
+  
+  # return the final dataframe
+  df_smote
 }
-################################################################################
-# Function to perform SLS on failure column
-SMOTE_for_multi_target <- function(train_data, target_col, features_cols) {
-  
-  # Extract features and target variable
-  train_features <- train_data[, features_cols]
-  train_target <- train_data[[target_col]]
-  
-  # Perform SLS
-  df_SMOTE <- SMOTE(train_features, target = train_target)$data
-  
-  # rename target column to original name
-  df_SMOTE <- df_SMOTE %>% 
-    rename(!!target_col := class)
-  
-  # bring back the binary failure column
-  df_SMOTE$failure <- ifelse(df_SMOTE[[target_col]] == "No Failure",
-                           "No Failure", "Failure")
-  
-  df_SMOTE
-}
-
 ################################################################################
 ################################# EDA ##########################################
 ################################################################################
@@ -294,6 +365,9 @@ pair_plot
 # remove df_pair from environment as it's no longer needed
 rm(df_pair)
 
+# see what failure types are mentioned in the data set
+unique(df_data$failure_type)
+
 # see number of different types of failure
 df_data %>% 
   filter(failure_numeric==1) %>%
@@ -306,18 +380,36 @@ df_data %>%
        y = "Number of failures",
        title ="Failure type vs Number of failures") + 
   coord_flip()
-  
+
+# 2 issues
+# 1: "No Failure" in the plot
+# 2: "Random Failures" not in the plot but in the data set (?)
+
+########################## some data cleaning ##################################
+################################################################################
+
 # check if there are rows with recorded failure types but failure_numeric = 0
 nrow(df_data %>% 
        filter(failure != "No Failure" & failure_numeric == 0))
-
 
 # reassign correct failure_numeric to the problematic rows
 df_data <- df_data %>% 
   mutate(failure_numeric = ifelse(failure_type=="No Failure", 0, 1))
 
-# one_hot encoding the categorical type column 
+# Make sure failure type is No Failure for rows that have failure_numeric = 0
+# this would eliminate "random failures"
+df_data <- df_data %>% 
+  mutate(failure_type = ifelse(failure=="No Failure", 
+                               "No Failure", 
+                               failure_type))
+
+# convert categorical features into factors instead of strings
 df_data$type <- as.factor(df_data$type)
+df_data$failure <- as.factor(df_data$failure)
+df_data$failure_type <- as.factor(df_data$failure_type)
+
+################################################################################
+# one_hot encoding the categorical type column 
 df_data <- one_hot_encode(df_data = df_data, categorical_col = "type")
 
 # re-arrange columns to have the target columns at the end 
@@ -384,13 +476,6 @@ plot_ROC_curves(trained_models=trained_models,
                 df_test=test_set, 
                 target=my_target) 
 
-# plot precision-recall curves
-plot_precision_recall_curves(trained_models=trained_models,
-                             model_names=mehtod_names, 
-                             df_test=test_set, 
-                             target=my_target) 
-
-
 # show confusion matrix for XGboost and random forest
 get_confusion_matrix(trained_models[[which(methods=="xgbTree")]],
                      df_test=test_set,
@@ -409,13 +494,52 @@ get_tpr_at_x_fpr(trained_models[[which(methods=="rf")]],
                  df_test=test_set,
                  target="failure", x=0.1)
 
-# do SMOTE based on binary target column (failure)
-# Do SMOTE on training set to avoid data leakage. Also test set needs to be realistic
+################################################################################
+
+# let's do a multi-class classification to see which failure instances we are 
+# failing to detect
+my_target   <- "failure_type"
+
+# train the models in lapply
+trained_models_multiclass <- lapply(methods, function(method){
+  print(method)
+  model <- train_model(df_training=train_set, 
+                       target=my_target,
+                       features=my_features, 
+                       method=method,
+                       control=ctrl)
+  model
+})
+
+get_confusion_matrix(trained_models_multiclass[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target="failure_type")$table
+
+get_confusion_matrix(trained_models_multiclass[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target="failure_type")$table
+
+# biggest problem is in tool wear failure, followed by Overstrain failure. 
+# both of which have less samples in our data. Let's do oversampling
+# Also seems like the models don't confusre different types of failures
+
+################################################################################
+
+# do a naive SMOTE based on binary target column (failure)
+# Do SMOTE on training set to avoid data leakage 
+# Also, test set needs to be realistic, so we do smote only on training set
+
+my_target <- "failure"
+positive_class <- "Failure"
+apprx_n_synthetic <- 2300
 train_set_smote <- smote_for_binary_target(train_data = train_set,
                                            target_col = my_target,
-                                           features_cols = my_features)
+                                           positive_class = positive_class,
+                                           features_cols = my_features, 
+                                           apprx_subclass_pop = apprx_n_synthetic)
 
 # show the resulting distribution of target column after SMOTE
+table(train_set$failure)
 table(train_set_smote$failure)
 
 # train the models based on new training set from SMOTE
@@ -436,12 +560,6 @@ plot_ROC_curves(trained_models=trained_models_SMOTE,
                 target=my_target) 
 
 
-# plot precision-recall curves
-plot_precision_recall_curves(trained_models=trained_models,
-                             model_names=mehtod_names, 
-                             df_test=test_set, 
-                             target=my_target) 
-
 # show confusion matrix for XGboost and random forest
 get_confusion_matrix(trained_models_SMOTE[[which(methods=="xgbTree")]],
                      df_test=test_set,
@@ -460,16 +578,27 @@ get_tpr_at_x_fpr(trained_models_SMOTE[[which(methods=="rf")]],
              df_test=test_set,
              target="failure", x=0.1)
 
-# our metric didn't improve after SMOTE on binary target. Let's do ADASYN on 
-# failure types to take into account variation in each subclass of failures
+# our metric didn't improve after SMOTE on binary target. SMOTE builds "bridges"
+# between different minority points. This can be pretty problematic if we have
+# multiple minority sub-classes. SMOTE based on each class would be a better
+# option. 
 
+my_target <- "failure"
+my_sub_target <- "failure_type"
+positive_class <- "Failure"
+n_subclass_synth <- 500
 
-train_set_adasyn <- adasyn_for_multi_target(train_data = train_set, 
-                                            target_col = "failure_type", 
-                                            features_cols = my_features)
+train_set_subclass_smote <- smote_for_failure_type(
+  train_data=train_set, 
+  target_col=my_target, 
+  positive_class = positive_class,
+  subclass_type_col=my_sub_target, 
+  features_cols=my_features,
+  apprx_subclass_pop=n_subclass_synth)
 
-train_set_adasyn %>% 
-  filter(failure=="Failure") %>%
+# see number of different types of failure
+train_set_subclass_smote %>% 
+  filter(failure_type != "No Failure") %>%
   group_by(failure_type) %>% 
   summarize(n_failure = n()) %>% 
   mutate(failure_type=reorder(failure_type,n_failure)) %>%
@@ -477,13 +606,18 @@ train_set_adasyn %>%
   geom_col(color = "steelblue", fill="blue3") + 
   labs(x = "Failure type",
        y = "Number of failures",
-       title ="Failure type vs Number of failures after ADASYN") + 
+       title ="Failure type vs Number of failures") + 
   coord_flip()
 
-# train the models based on new training set from ADASYN
-trained_models_ADASYN <- lapply(methods, function(method){
+
+# show the resulting distribution of target column after SMOTE
+table(train_set$failure)
+table(train_set_smote$failure)
+
+# train the models based on new training set from SMOTE
+trained_models_subclass_SMOTE <- lapply(methods, function(method){
   print(method)
-  model <- train_model(df_training=train_set_adasyn, 
+  model <- train_model(df_training=train_set_subclass_smote, 
                        target=my_target,
                        features=my_features, 
                        method=method,
@@ -491,9 +625,169 @@ trained_models_ADASYN <- lapply(methods, function(method){
   model
 })
 
-# plot the new ROC curves after ADASYN
-plot_ROC_curves(trained_models=trained_models_ADASYN,
+# plot the new ROC curves after SMOTE
+plot_ROC_curves(trained_models=trained_models_subclass_SMOTE,
                 model_names=mehtod_names, 
                 df_test=test_set, 
                 target=my_target) 
+
+# show confusion matrix for XGboost and random forest
+get_confusion_matrix(trained_models_subclass_SMOTE[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target="failure")$table
+
+get_confusion_matrix(trained_models_subclass_SMOTE[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target="failure")$table
+
+# get our metric
+get_tpr_at_x_fpr(trained_models_subclass_SMOTE[[which(methods=="xgbTree")]],
+                 df_test=test_set,
+                 target="failure", x=0.1)
+
+get_tpr_at_x_fpr(trained_models_subclass_SMOTE[[which(methods=="rf")]],
+                 df_test=test_set,
+                 target="failure", x=0.1)
+################################################################################
+
+# NEXT: do density based smote (DBSMOTE) which doesn't let bridges 
+# between main minority cluster and a random minority point.
+n_subclass_synth <- 500
+train_set_subclass_DBSMOTE <- DBSMOTE_for_failure_type(
+  train_data=train_set, 
+  target_col=my_target, 
+  positive_class = positive_class,
+  subclass_type_col=my_sub_target, 
+  features_cols=my_features,
+  apprx_subclass_pop=n_subclass_synth)
+
+# see number of different types of failure
+train_set_subclass_DBSMOTE %>% 
+  filter(failure_type != "No Failure") %>%
+  group_by(failure_type) %>% 
+  summarize(n_failure = n()) %>% 
+  mutate(failure_type=reorder(failure_type,n_failure)) %>%
+  ggplot(aes(x=failure_type, y=n_failure)) + 
+  geom_col(color = "steelblue", fill="blue3") + 
+  labs(x = "Failure type",
+       y = "Number of failures",
+       title ="Failure type vs Number of failures") + 
+  coord_flip()
+
+
+# show the resulting distribution of target column after SMOTE
+table(train_set$failure)
+table(train_set_subclass_DBSMOTE$failure)
+
+# train the models based on new training set from SMOTE
+trained_models_subclass_DBSMOTE <- lapply(methods, function(method){
+  print(method)
+  model <- train_model(df_training=train_set_subclass_DBSMOTE, 
+                       target=my_target,
+                       features=my_features, 
+                       method=method,
+                       control=ctrl)
+  model
+})
+
+# plot the new ROC curves after DBSMOTE
+plot_ROC_curves(trained_models=trained_models_subclass_DBSMOTE,
+                model_names=mehtod_names, 
+                df_test=test_set, 
+                target=my_target) 
+
+# show confusion matrix for XGboost and random forest
+get_confusion_matrix(trained_models_subclass_DBSMOTE[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target="failure")$table
+
+get_confusion_matrix(trained_models_subclass_DBSMOTE[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target="failure")$table
+
+# get our metric
+get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE[[which(methods=="xgbTree")]],
+                 df_test=test_set,
+                 target="failure", x=0.1)
+
+get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE[[which(methods=="rf")]],
+                 df_test=test_set,
+                 target="failure", x=0.1)
+
+
+################################################################################
+res_enn <- ENNClassif(failure_type~., 
+                      train_set_subclass_blsmote[c(
+                         "air_t", "process_t", "rpm", "torque","wear",
+                         "type_H", "type_L", "type_M", "failure_type")], 
+                      k = 5, 
+                      dist = "Euclidean",
+                      Cl = "all")
+
+train_set_subclass_DBSMOTE_ENN <- train_set_subclass_DBSMOTE[-res_enn[[2]], ]
+
+
+# show the resulting distribution of target column after SMOTE
+table(train_set$failure)
+table(train_set_subclass_DBSMOTE_ENN$failure)
+
+
+# see number of different types of failure
+train_set_subclass_DBSMOTE_ENN %>% 
+  filter(failure_type != "No Failure") %>%
+  group_by(failure_type) %>% 
+  summarize(n_failure = n()) %>% 
+  mutate(failure_type=reorder(failure_type,n_failure)) %>%
+  ggplot(aes(x=failure_type, y=n_failure)) + 
+  geom_col(color = "steelblue", fill="blue3") + 
+  labs(x = "Failure type",
+       y = "Number of failures",
+       title ="Failure type vs Number of failures") + 
+  coord_flip()
+
+trained_models_subclass_DBSMOTE_ENN <- lapply(methods, function(method){
+  print(method)
+  model <- train_model(df_training=train_set_subclass_DBSMOTE_ENN, 
+                       target=my_target,
+                       features=my_features, 
+                       method=method,
+                       control=ctrl)
+  model
+})
+
+# plot the new ROC curves after DBSMOTE_ENN
+plot_ROC_curves(trained_models=trained_models_subclass_DBSMOTE_ENN,
+                model_names=mehtod_names, 
+                df_test=test_set, 
+                target=my_target) 
+
+# show confusion matrix for XGboost and random forest
+get_confusion_matrix(trained_models_subclass_DBSMOTE_ENN[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target="failure")$table
+
+get_confusion_matrix(trained_models_subclass_DBSMOTE_ENN[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target="failure")$table
+
+# get our metric
+get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE_ENN[[which(methods=="xgbTree")]],
+                 df_test=test_set,
+                 target="failure", x=0.1)
+
+get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE_ENN[[which(methods=="rf")]],
+                 df_test=test_set,
+                 target="failure", x=0.1)
+
+
+
+
+
+
+
+
+
+
+
+
 
