@@ -426,7 +426,7 @@ pair_plot <- ggpairs(df_pair,
                      lower = list(continuous = wrap("points", alpha = 0.2), 
                                   combo = "box_no_facet"),
                      diag = list(continuous = wrap("densityDiag", alpha = 0.2))) +
-  labs(title ="Feaure pair-wise relations grid plot") + 
+  labs(title ="Feature pair-wise relations grid plot") + 
   theme(axis.text.x = element_text(angle = 90,))
 
 # show pair plot (attention: plot takes a bit of time to complete)
@@ -458,13 +458,10 @@ df_data %>%
 ########################## some data cleaning ##################################
 ################################################################################
 
-# check if there are rows with recorded failure types but failure_numeric = 0
-nrow(df_data %>% 
-       filter(failure != "No Failure" & failure_numeric == 0))
-
 # reassign correct failure_numeric to the problematic rows
 df_data <- df_data %>% 
-  mutate(failure_numeric = ifelse(failure_type=="No Failure", 0, 1))
+  mutate(failure_numeric = ifelse(failure_type=="No Failure", 0, 1),
+         failure = ifelse(failure_type=="No Failure", "No Failure", failure))
 
 # Make sure failure type is No Failure for rows that have failure_numeric = 0
 # this would eliminate "random failures"
