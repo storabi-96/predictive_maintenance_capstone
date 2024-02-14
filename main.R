@@ -17,7 +17,7 @@ library(ROCR)
 library(pROC)
 library(smotefamily)
 library(UBL)
-#library(MASS)
+library(MASS)
 ################################################################################
 ############### Defining functions to be used in script#########################
 ################################################################################
@@ -66,16 +66,6 @@ get_confusion_matrix <- function(model, df_test, target) {
                         df_test[[target]])
   cm
 }
-
-get_f1_score <- function(model, df_test, target) {
-  # make confusion matrix
-  my_cm <- get_confusion_matrix(model=model, 
-                                df_test=df_test, 
-                                target=target)
-  # extract F1 score from it
-  my_cm[["byClass"]][["F1"]]
-}
-
 ################################################################################
 get_ROC_performance <- function(model, df_test, target) {
   # get probabilities
@@ -98,18 +88,6 @@ get_tpr_at_x_fpr <- function(model, df_test, target, x=0.1) {
   approx_tpr <- approx(fpr, tpr, xout = x)$y
   approx_tpr
 }
-
-################################################################################
-get_precision_recall_performance <- function(model, df_test, target) {
-  # get probabilities
-  predicted_probs <- predict(model, newdata = df_test, type = "prob")[, "Failure"]
-  pred <- prediction(predicted_probs, df_test[[target]])
-  
-  # get precision and recall
-  perf <- performance(pred, "prec", "rec")
-  perf
-}
-
 ################################################################################
 plot_ROC_curves <- function(trained_models, model_names, df_test, target) {
   
@@ -146,6 +124,10 @@ plot_ROC_curves_cross_comparison <- function(trained_models_1,
                                              model_names, 
                                              df_test, target,
                                              df_test_2 = data.frame()) {
+
+  
+  # create a dictionary using setNames()
+  method_model_dictionary <- setNames(model_names, method_names)
   
   # Create an empty plot
   plot(0, 0, type = "n", xlim = c(0, 1), ylim = c(0, 1), 
@@ -155,91 +137,57 @@ plot_ROC_curves_cross_comparison <- function(trained_models_1,
   grid(col = "grey", lty = "dotted")
   legend_names <- character()
   
+  # use same test set if another one is not given
   if (nrow(df_test_2)==0){df_test_2 <- df_test}
   
-  # Plot ROC curves for each model
-  for (i in seq_along(method_names)) {
+  color_index <- 1
+  # plot ROC curves for the methods which are in "method_names" argument
+  for (i in seq(1, length(trained_models_1))) {
     
+    method_name_1 <- trained_models_1[[i]][["method"]]
+    
+    for (ii in seq(1, length(trained_models_2))) {
+      
+      method_name_2 <- trained_models_2[[ii]][["method"]]
+      
+      if (method_name_1==method_name_2 & method_name_2 %in% method_names){
+        
+        perf_1 <- get_ROC_performance(trained_models_1[[i]], 
+                                      df_test, 
+                                      target)
+        
+        perf_2 <- get_ROC_performance(trained_models_2[[ii]], 
+                                      df_test_2, 
+                                      target)
+        
+        # extract TPR and FPR values
+        fpr_1 <- perf_1@x.values[[1]]
+        tpr_1 <- perf_1@y.values[[1]]
+        fpr_2 <- perf_2@x.values[[1]]
+        tpr_2 <- perf_2@y.values[[1]]
+        
+        # plot ROC curve
+        lines(fpr_1, tpr_1, col = color_index, lwd = 2, lty=1)
+        lines(fpr_2, tpr_2, col = color_index, lwd = 2, lty=2)
+        
+        # make the right legends
+        legend_names <- c(legend_names, 
+                          paste(set_1_description, 
+                            method_model_dictionary[[method_name_1]]))
+        
+        legend_names <- c(legend_names, 
+                          paste(set_2_description, 
+                            method_model_dictionary[[method_name_1]]))
+        
+        color_index <- color_index + 1
+        }
+      }
+    }
 
-    
-    perf_2 <- get_ROC_performance(trained_models_2[[i]], 
-                                  df_test_2, 
-                                  target)
-    
-    method_name <- trained_models_2[[i]][["method"]]
-    perf_1 <- get_ROC_performance(trained_models_1[[which(methods==method_name)]], 
-                                  df_test, 
-                                  target)
-    
-    # Extract TPR and FPR values
-    fpr_1 <- perf_1@x.values[[1]]
-    tpr_1 <- perf_1@y.values[[1]]
-    
-    # Extract TPR and FPR values
-    fpr_2 <- perf_2@x.values[[1]]
-    tpr_2 <- perf_2@y.values[[1]]
-    
-    # Plot ROC curve
-    lines(fpr_1, tpr_1, col = i, lwd = 2, lty=1)
-    lines(fpr_2, tpr_2, col = i, lwd = 2, lty=2)
-    
-    legend_names <- c(legend_names, paste(set_1_description, model_names[i]))
-    legend_names <- c(legend_names, paste(set_2_description, model_names[i]))
-    
-  }
-  
   # Add legend
   legend("bottomright", legend = legend_names, 
          col = rep(seq_along(model_names), each = 2), 
          lwd = 2, lty = c(1, 2), cex = 0.8)
-}
-
-################################################################################
-plot_precision_recall_curves <- function(trained_models, model_names, df_test, target) {
-  # Create an empty plot
-  plot(0, 0, type = "n", xlim = c(0, 1), ylim = c(0, 1), 
-       xlab = "Recall", ylab = "Precision", 
-       main = "Precision-Recall curves comparison")
-  
-  grid(col = "grey", lty = "dotted")
-  
-  # Plot precision-recall curves for each model
-  for (i in seq_along(trained_models)) {
-    perf <- get_precision_recall_performance(trained_models[[i]], df_test, target)
-    
-    # Extract precision and recall values
-    recall <- perf@x.values[[1]]
-    precision <- perf@y.values[[1]]
-    
-    # Plot precision-recall curve
-    lines(recall, precision, col = i, lwd = 2)
-  }
-  
-  # Add legend
-  legend("bottomright", legend = model_names, 
-         col = seq_along(trained_models), lwd = 2, cex = 0.8)
-}
-
-################################################################################
-# Function to perform SMOTE on failure column
-smote_for_binary_target <- function(train_data, target_col, positive_class,
-                                    apprx_subclass_pop, features_cols) {
-  # Extract features and target variable
-  train_features <- train_data[, features_cols]
-  train_target <- train_data[[target_col]]
-  
-  # find dupsize to pass into SMOTE function
-  dupsize <- apprx_subclass_pop/table(train_data[[target_col]])[[positive_class]]
-  
-  # Perform SMOTE
-  df_smote <- SMOTE(train_features, target = train_target, 
-                    dup_size = dupsize)$data
-  
-  # rename target column to original name
-  df_smote <- df_smote %>% 
-    rename(!!target_col := class)
-  
-  df_smote
 }
 
 ################################################################################
@@ -390,7 +338,52 @@ apply_ENN <- function(df, target, features,
   
   data_filtered
 }
-
+################################################################################
+# converting multiclass classification to binary classification
+conver_to_binary_confusion_matrix <- function(multiclass_confusion_matrix){
+  
+  # Extract true negatives (TN)
+  TN <- multiclass_confusion_matrix["No Failure", "No Failure"]
+  
+  # Calculate false positives (FP)
+  FP <- sum(multiclass_confusion_matrix[, "No Failure"][-2])
+  
+  # Calculate false negatives (FN)
+  FN <-  sum(multiclass_confusion_matrix["No Failure", -2 ])
+  
+  # Calculate true positives (TP)
+  TP <- sum(diag(multiclass_confusion_matrix)) - TN
+  
+  # Construct the binary confusion matrix
+  binary_confusion_matrix <- matrix(c(TP, FP, FN, TN), nrow = 2, byrow = TRUE,
+                                    dimnames = list(c("Predicted Failure", 
+                                                      "Predicted No Failure"),
+                                                    c("Failure", "No Failure")))
+  binary_confusion_matrix
+}
+################################################################################
+# calculates f1 score after converting multiclass classification to binary
+get_f1_score<- function(binary_confusion_matrix){
+  
+  precision <- binary_confusion_matrix[1,1]/(binary_confusion_matrix[1,1] + binary_confusion_matrix[1,2])
+  recall <- binary_confusion_matrix[1,1]/(binary_confusion_matrix[1,1] + binary_confusion_matrix[2,1])
+  F1 <- 2 * ( (precision*recall) / (precision+recall) )
+  F1
+}
+################################################################################
+# function hard voting ensemble 
+predict_ensemble <- function(models, ensemble_methods, new_data) {
+  
+  predictions <- sapply(ensemble_methods, function(method) {
+    predict(models[[which(methods==method)]], new_data)
+  })
+  
+  # Combine predictions using majority voting
+  majority_vote <- apply(predictions, 1, function(row) {
+    names(which.max(table(row)))
+  })
+  majority_vote
+}
 ################################################################################
 ################################# EDA ##########################################
 ################################################################################
@@ -436,7 +429,7 @@ pair_plot <- ggpairs(df_pair,
   labs(title ="Feaure pair-wise relations grid plot") + 
   theme(axis.text.x = element_text(angle = 90,))
 
-# show pair plot
+# show pair plot (attention: plot takes a bit of time to complete)
 pair_plot
 
 # remove df_pair from environment as it's no longer needed
@@ -461,7 +454,7 @@ df_data %>%
 # 2 issues
 # 1: "No Failure" in the plot
 # 2: "Random Failures" not in the plot but in the data set (?)
-
+################################################################################
 ########################## some data cleaning ##################################
 ################################################################################
 
@@ -516,6 +509,7 @@ rm(df_corr)
 ################################################################################
 ##############################  Modelling ######################################
 ################################################################################
+set.seed(1)
 
 # Split the data set into training and test sets
 test_indices <- createDataPartition(df_data$failure, times=1, p=0.2, list=FALSE)
@@ -537,7 +531,7 @@ my_features <- c("air_t", "process_t", "rpm", "torque",
 my_target   <- "failure"
 
 # train the models in lapply
-trained_models <- lapply(methods, function(method){
+trained_models_binary <- lapply(methods, function(method){
   print(method)
   model <- train_model(df_training=train_set, 
               target=my_target,
@@ -548,62 +542,109 @@ trained_models <- lapply(methods, function(method){
 })
 
 # plot ROC curves
-plot_ROC_curves(trained_models=trained_models,
+plot_ROC_curves(trained_models=trained_models_binary,
                 model_names=mehtod_names, 
                 df_test=test_set, 
                 target=my_target) 
 
-# show confusion matrix for XGboost and random forest
-get_confusion_matrix(trained_models[[which(methods=="xgbTree")]],
-                     df_test=test_set,
-                     target="failure")$table
-
-get_confusion_matrix(trained_models[[which(methods=="rf")]],
-                     df_test=test_set,
-                     target="failure")$table
-
+###
 # get our metric
-get_tpr_at_x_fpr(trained_models[[which(methods=="xgbTree")]],
-                 df_test=test_set, 
-                 target="failure", x=0.1)
+tpr_at_10fpr <- sapply(methods, function(method){
+  
+  tprs <- get_tpr_at_x_fpr(trained_models_binary[[which(methods==method)]],
+                           df_test=test_set, 
+                           target=my_target, x=0.1)
+  round(tprs, 4)
+  
+})
 
-get_tpr_at_x_fpr(trained_models[[which(methods=="rf")]],
-                 df_test=test_set,
-                 target="failure", x=0.1)
+# create the table
+tpr_table <- matrix(unname(tpr_at_10fpr), nrow = 1, byrow = TRUE)
+rownames(tpr_table) <- c("binary classification")
+colnames(tpr_table) <- names(tpr_at_10fpr)
+tpr_table
 
+###
+# get f1-scores
+f1_scores <- sapply(methods, function(method){
+  
+  f1 <- get_f1_score(
+    get_confusion_matrix(
+      trained_models_binary[[which(methods==method)]],
+      df_test=test_set,
+      target="failure")$table)
+  round(f1, 4)
+  
+})
+
+# create the table
+f1_table <- matrix(unname(f1_scores), nrow = 1, byrow = TRUE)
+rownames(f1_table) <- c("binary classification")
+colnames(f1_table) <- names(f1_scores)
+f1_table
+
+# show confusion matrix for XGboost and random forest
+get_confusion_matrix(trained_models_binary[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target=my_target)$table
+
+get_confusion_matrix(trained_models_binary[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target=my_target)$table
 ################################################################################
 
 # let's do a multi-class classification to see which failure instances we are 
 # failing to detect
-my_target   <- "failure_type"
+my_multiclass_target   <- "failure_type"
 my_binary_target   <- "failure"
 
 # train the models in lapply
 trained_models_multiclass <- lapply(methods, function(method){
   print(method)
   model <- train_model(df_training=train_set, 
-                       target=my_target,
+                       target=my_multiclass_target,
                        features=my_features, 
                        method=method,
                        control=ctrl)
   model
 })
 
-get_confusion_matrix(trained_models_multiclass[[which(methods=="rf")]],
-                     df_test=test_set,
-                     target="failure_type")$table
-
-get_confusion_matrix(trained_models_multiclass[[which(methods=="xgbTree")]],
-                     df_test=test_set,
-                     target="failure_type")$table
-
 plot_ROC_curves(trained_models=trained_models_multiclass,
                 model_names=mehtod_names, 
                 df_test=test_set, 
                 target=my_binary_target) 
 
+##
+# get new tpr scores at 10% fpr
+new_tpr_row <- unname(sapply(methods, function(method){
+    tpr <- get_tpr_at_x_fpr(trained_models_multiclass[[which(methods==method)]],
+                       df_test=test_set, 
+                       target=my_binary_target, x=0.1)
+    round(tpr, 4)}))
 
-plot_ROC_curves_cross_comparison(trained_models_1 = trained_models, 
+# add them to the table
+tpr_table <- rbind(tpr_table, new_tpr_row)    
+rownames(tpr_table)[nrow(tpr_table)] <- "multiclass classification"
+tpr_table
+
+##
+# get new f1-scores
+new_f1_row <- unname(
+  sapply(methods, function(method){
+  f1 <- get_f1_score(
+    conver_to_binary_confusion_matrix(
+    get_confusion_matrix(
+      trained_models_multiclass[[which(methods==method)]],
+      df_test=test_set,
+      target=my_multiclass_target)$table))
+  round(f1, 4)}))
+
+# add them to the table
+f1_table <- rbind(f1_table, new_f1_row)    
+rownames(f1_table)[nrow(f1_table)] <- "multiclass classification"
+f1_table
+
+plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_binary, 
                                  trained_models_2 = trained_models_multiclass,
                                  set_1_description = "binary",
                                  set_2_description = "multiclass",
@@ -612,17 +653,14 @@ plot_ROC_curves_cross_comparison(trained_models_1 = trained_models,
                                  df_test=test_set, target=my_binary_target)
 
 
-get_tpr_at_x_fpr(trained_models_multiclass[[which(methods=="xgbTree")]],
-                 df_test=test_set, 
-                 target="failure", x=0.1)
 
-get_tpr_at_x_fpr(trained_models_multiclass[[which(methods=="rf")]],
-                 df_test=test_set, 
-                 target="failure", x=0.1)
+get_confusion_matrix(trained_models_multiclass[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target=my_multiclass_target)$table
 
-get_tpr_at_x_fpr(trained_models_multiclass[[which(methods=="LogitBoost")]],
-                 df_test=test_set, 
-                 target="failure", x=0.1)
+get_confusion_matrix(trained_models_multiclass[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target=my_multiclass_target)$table
 
 # biggest problem is in tool wear failure. it has less samples in our data. 
 # Let's do oversampling. Also seems like the models don't confuse different 
@@ -646,22 +684,9 @@ train_set_subclass_smote <- smote_for_failure_type(
   features_cols=my_features,
   apprx_subclass_pop=n_subclass_synth)
 
-# see number of different types of failure
-train_set_subclass_smote %>% 
-  filter(failure_type != "No Failure") %>%
-  group_by(failure_type) %>% 
-  summarize(n_failure = n()) %>% 
-  mutate(failure_type=reorder(failure_type,n_failure)) %>%
-  ggplot(aes(x=failure_type, y=n_failure)) + 
-  geom_col(color = "steelblue", fill="blue3") + 
-  labs(x = "Failure type",
-       y = "Number of failures",
-       title ="Failure type vs Number of failures") + 
-  coord_flip()
-
 # show the resulting distribution of target column after SMOTE
-table(train_set$failure)
-table(train_set_subclass_smote$failure)
+table(train_set$failure_type)
+table(train_set_subclass_smote$failure_type)
 
 # train the models based on new training set from SMOTE
 trained_models_subclass_SMOTE <- lapply(methods, function(method){
@@ -680,6 +705,46 @@ plot_ROC_curves(trained_models=trained_models_subclass_SMOTE,
                 df_test=test_set, 
                 target=my_binary_target) 
 
+##
+# get new tpr scores at 10% fpr
+new_tpr_row <- unname(sapply(methods, function(method){
+  tpr <- get_tpr_at_x_fpr(trained_models_subclass_SMOTE[[which(methods==method)]],
+                          df_test=test_set, 
+                          target=my_binary_target, x=0.1)
+  round(tpr, 4)}))
+
+# add them to the table
+tpr_table <- rbind(tpr_table, new_tpr_row)    
+rownames(tpr_table)[nrow(tpr_table)] <- "multiclass + SMOTE"
+tpr_table
+
+##
+# get new f1-scores
+new_f1_row <- unname(
+  sapply(methods, function(method){
+    f1 <- get_f1_score(
+      conver_to_binary_confusion_matrix(
+        get_confusion_matrix(
+          trained_models_subclass_SMOTE[[which(methods==method)]],
+          df_test=test_set,
+          target=my_multiclass_target)$table))
+    round(f1, 4)}))
+
+# add them to the table
+f1_table <- rbind(f1_table, new_f1_row)    
+rownames(f1_table)[nrow(f1_table)] <- "multiclass + SMOTE"
+f1_table
+
+
+plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass, 
+                                 trained_models_2 = trained_models_subclass_SMOTE,
+                                 set_1_description = "multiclass",
+                                 set_2_description = "multiclass SMOTE",
+                                 method_names = c("rf","xgbTree"),
+                                 model_names = c("Random forest", "XGBoost"), 
+                                 df_test=test_set, target=my_binary_target)
+
+
 # show confusion matrix for XGboost and random forest
 get_confusion_matrix(trained_models_subclass_SMOTE[[which(methods=="xgbTree")]],
                      df_test=test_set,
@@ -689,22 +754,6 @@ get_confusion_matrix(trained_models_subclass_SMOTE[[which(methods=="rf")]],
                      df_test=test_set,
                      target=my_multiclass_target)$table
 
-# get our metric
-get_tpr_at_x_fpr(trained_models_subclass_SMOTE[[which(methods=="xgbTree")]],
-                 df_test=test_set,
-                 target=my_binary_target, x=0.1)
-
-get_tpr_at_x_fpr(trained_models_subclass_SMOTE[[which(methods=="rf")]],
-                 df_test=test_set,
-                 target=my_binary_target, x=0.1)
-
-plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass, 
-                                 trained_models_2 = trained_models_subclass_SMOTE,
-                                 set_1_description = "multiclass",
-                                 set_2_description = "multiclass SMOTE",
-                                 method_names = c("rf","xgbTree"),
-                                 model_names = c("Random forest", "XGBoost"), 
-                                 df_test=test_set, target=my_binary_target)
 
 ################################################################################
 # NEXT: do density based smote (DBSMOTE) which doesn't let bridges 
@@ -722,22 +771,10 @@ train_set_subclass_DBSMOTE <- DBSMOTE_for_failure_type(
   features_cols=my_features,
   apprx_subclass_pop=n_subclass_synth)
 
-# see number of different types of failure
-train_set_subclass_DBSMOTE %>% 
-  filter(failure_type != "No Failure") %>%
-  group_by(failure_type) %>% 
-  summarize(n_failure = n()) %>% 
-  mutate(failure_type=reorder(failure_type,n_failure)) %>%
-  ggplot(aes(x=failure_type, y=n_failure)) + 
-  geom_col(color = "steelblue", fill="blue3") + 
-  labs(x = "Failure type",
-       y = "Number of failures",
-       title ="Failure type vs Number of failures") + 
-  coord_flip()
 
 # show the resulting distribution of target column after SMOTE
-table(train_set$failure)
-table(train_set_subclass_DBSMOTE$failure)
+table(train_set$failure_type)
+table(train_set_subclass_DBSMOTE$failure_type)
 
 # train the models based on new training set from SMOTE
 trained_models_subclass_DBSMOTE <- lapply(methods, function(method){
@@ -756,23 +793,35 @@ plot_ROC_curves(trained_models=trained_models_subclass_DBSMOTE,
                 df_test=test_set, 
                 target=my_binary_target) 
 
-# show confusion matrix for XGboost and random forest
-get_confusion_matrix(trained_models_subclass_DBSMOTE[[which(methods=="xgbTree")]],
-                     df_test=test_set,
-                     target=my_multiclass_target)$table
+##
+# get new tpr scores at 10% fpr
+new_tpr_row <- unname(sapply(methods, function(method){
+  tpr <- get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE[[which(methods==method)]],
+                          df_test=test_set, 
+                          target=my_binary_target, x=0.1)
+  round(tpr, 4)}))
 
-get_confusion_matrix(trained_models_subclass_DBSMOTE[[which(methods=="rf")]],
-                     df_test=test_set,
-                     target=my_multiclass_target)$table
+# add them to the table
+tpr_table <- rbind(tpr_table, new_tpr_row)    
+rownames(tpr_table)[nrow(tpr_table)] <- "multiclass + DBSMOTE"
+tpr_table
 
-# get our metric
-get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE[[which(methods=="xgbTree")]],
-                 df_test=test_set,
-                 target=my_binary_target, x=0.1)
+##
+# get new f1-scores
+new_f1_row <- unname(
+  sapply(methods, function(method){
+    f1 <- get_f1_score(
+      conver_to_binary_confusion_matrix(
+        get_confusion_matrix(
+          trained_models_subclass_DBSMOTE[[which(methods==method)]],
+          df_test=test_set,
+          target=my_multiclass_target)$table))
+    round(f1, 4)}))
 
-get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE[[which(methods=="rf")]],
-                 df_test=test_set,
-                 target=my_binary_target, x=0.1)
+# add them to the table
+f1_table <- rbind(f1_table, new_f1_row)    
+rownames(f1_table)[nrow(f1_table)] <- "multiclass + DBSMOTE"
+f1_table
 
 plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass, 
                                  trained_models_2 = trained_models_subclass_DBSMOTE,
@@ -782,9 +831,17 @@ plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass,
                                  model_names = c("Random forest", "XGBoost"), 
                                  df_test=test_set, target=my_binary_target)
 
+# show confusion matrix for XGboost and random forest
+get_confusion_matrix(trained_models_subclass_DBSMOTE[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target=my_multiclass_target)$table
+
+get_confusion_matrix(trained_models_subclass_DBSMOTE[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target=my_multiclass_target)$table
+
 ################################################################################
 # Applying ENN on DBSMOTE database before training to reduce noise
-
 my_multiclass_target <- "failure_type"
 my_binary_target <- "failure"
 positive_class <- "Failure"
@@ -797,19 +854,6 @@ train_set_subclass_DBSMOTE_ENN <- apply_ENN(df=train_set_subclass_DBSMOTE,
 # show the resulting distribution of target column after SMOTE
 table(train_set_subclass_DBSMOTE$failure_type)
 table(train_set_subclass_DBSMOTE_ENN$failure_type)
-
-# see number of different types of failure
-train_set_subclass_DBSMOTE_ENN %>% 
-  filter(failure_type != "No Failure") %>%
-  group_by(failure_type) %>% 
-  summarize(n_failure = n()) %>% 
-  mutate(failure_type=reorder(failure_type,n_failure)) %>%
-  ggplot(aes(x=failure_type, y=n_failure)) + 
-  geom_col(color = "steelblue", fill="blue3") + 
-  labs(x = "Failure type",
-       y = "Number of failures",
-       title ="Failure type vs Number of failures") + 
-  coord_flip()
 
 # train models
 trained_models_subclass_DBSMOTE_ENN <- lapply(methods, function(method){
@@ -828,24 +872,35 @@ plot_ROC_curves(trained_models=trained_models_subclass_DBSMOTE_ENN,
                 df_test=test_set, 
                 target=my_binary_target) 
 
-# show confusion matrix for XGboost and random forest
-get_confusion_matrix(trained_models_subclass_DBSMOTE_ENN[[which(methods=="xgbTree")]],
-                     df_test=test_set,
-                     target=my_multiclass_target)$table
+##
+# get new tpr scores at 10% fpr
+new_tpr_row <- unname(sapply(methods, function(method){
+  tpr <- get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE_ENN[[which(methods==method)]],
+                          df_test=test_set, 
+                          target=my_binary_target, x=0.1)
+  round(tpr, 4)}))
 
-get_confusion_matrix(trained_models_subclass_DBSMOTE_ENN[[which(methods=="rf")]],
-                     df_test=test_set,
-                     target=my_multiclass_target)$table
+# add them to the table
+tpr_table <- rbind(tpr_table, new_tpr_row)    
+rownames(tpr_table)[nrow(tpr_table)] <- "multiclass + DBSMOTE/ENN"
+tpr_table
 
-# get our metric
-get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE_ENN[[which(methods=="xgbTree")]],
-                 df_test=test_set,
-                 target=my_binary_target, x=0.1)
+##
+# get new f1-scores
+new_f1_row <- unname(
+  sapply(methods, function(method){
+    f1 <- get_f1_score(
+      conver_to_binary_confusion_matrix(
+        get_confusion_matrix(
+          trained_models_subclass_DBSMOTE_ENN[[which(methods==method)]],
+          df_test=test_set,
+          target=my_multiclass_target)$table))
+    round(f1, 4)}))
 
-get_tpr_at_x_fpr(trained_models_subclass_DBSMOTE_ENN[[which(methods=="rf")]],
-                 df_test=test_set,
-                 target=my_binary_target, x=0.1)
-
+# add them to the table
+f1_table <- rbind(f1_table, new_f1_row)    
+rownames(f1_table)[nrow(f1_table)] <- "multiclass + DBSMOTE/ENN"
+f1_table
 
 # compare with original
 plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass, 
@@ -855,6 +910,15 @@ plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass,
                                  method_names = c("rf","xgbTree"),
                                  model_names = c("Random forest", "XGBoost"), 
                                  df_test=test_set, target=my_binary_target)
+
+# show confusion matrix for XGboost and random forest
+get_confusion_matrix(trained_models_subclass_DBSMOTE_ENN[[which(methods=="xgbTree")]],
+                     df_test=test_set,
+                     target=my_multiclass_target)$table
+
+get_confusion_matrix(trained_models_subclass_DBSMOTE_ENN[[which(methods=="rf")]],
+                     df_test=test_set,
+                     target=my_multiclass_target)$table
 
 ################################################################################
 ################################################################################
@@ -879,7 +943,7 @@ test_set_LDA[[my_binary_target]] <- test_set[[my_binary_target]]
 test_set_LDA[[my_multiclass_target]] <- test_set[[my_multiclass_target]]
 
 
-#test_set_LDA %>% ggplot(aes(LD1, LD2, color=failure)) + geom_point(alpha=0.5)
+test_set_LDA %>% ggplot(aes(LD1, LD2, color=failure)) + geom_point(alpha=0.5)
 
 # redefine methods
 new_methods      <- c("rf", "xgbTree",  "LogitBoost")
@@ -887,8 +951,6 @@ new_mehtod_names <- c("Random forest","XGBoost", "Boosted logistic regression")
 
 # features to use for training
 my_features_LDA <- c("LD1", "LD2", "LD3", "LD4")
-
-
 
 trained_models_subclass_LDA <- lapply(new_methods, function(method){
   print(method)
@@ -906,6 +968,47 @@ plot_ROC_curves(trained_models=trained_models_subclass_LDA,
                 df_test=test_set_LDA, 
                 target=my_binary_target) 
 
+##
+# get new tpr scores at 10% fpr
+new_tpr_row <- unname(sapply(seq_along(new_methods), function(i){
+
+  tpr <- get_tpr_at_x_fpr(trained_models_subclass_LDA[[i]],
+                          df_test=test_set_LDA, 
+                          target=my_binary_target, x=0.1)
+  round(tpr, 4)}))
+
+# NA for the missing methods
+new_tpr_row_modified <- rep(NA, length(methods))
+new_tpr_row_modified[methods %in% new_methods] <- new_tpr_row
+
+# add them to the table
+tpr_table <- rbind(tpr_table, new_tpr_row_modified)    
+rownames(tpr_table)[nrow(tpr_table)] <- "multiclass in LD space"
+tpr_table
+
+##
+# get new f1-scores
+new_f1_row <- unname(
+  sapply(seq_along(new_methods), function(i){
+    f1 <- get_f1_score(
+      conver_to_binary_confusion_matrix(
+        get_confusion_matrix(
+          trained_models_subclass_DBSMOTE_ENN[[i]],
+          df_test=test_set,
+          target=my_multiclass_target)$table))
+    round(f1, 4)}
+    )
+  )
+
+# NA for the missing methods
+new_f1_row_modified <- rep(NA, length(methods))
+new_f1_row_modified[methods %in% new_methods] <- new_f1_row
+
+# add them to the table
+f1_table <- rbind(f1_table, new_f1_row_modified)    
+rownames(f1_table)[nrow(f1_table)] <- "multiclass in LD space"
+f1_table
+
 # show confusion matrix for XGboost and random forest
 trained_models_subclass_LDA[[1]][["method"]]
 get_confusion_matrix(trained_models_subclass_LDA[[1]],
@@ -916,23 +1019,6 @@ trained_models_subclass_LDA[[2]][["method"]]
 get_confusion_matrix(trained_models_subclass_LDA[[2]],
                      df_test=test_set_LDA,
                      target=my_multiclass_target)$table
-
-trained_models_subclass_LDA[[3]][["method"]]
-get_confusion_matrix(trained_models_subclass_LDA[[3]],
-                     df_test=test_set_LDA,
-                     target=my_multiclass_target)$table
-
-# get our metric
-trained_models_subclass_LDA[[1]][["method"]]
-get_tpr_at_x_fpr(trained_models_subclass_LDA[[1]],
-                 df_test=test_set_LDA,
-                 target=my_binary_target, x=0.1)
-
-trained_models_subclass_LDA[[2]][["method"]]
-get_tpr_at_x_fpr(trained_models_subclass_LDA[[2]],
-                 df_test=test_set_LDA,
-                 target=my_binary_target, x=0.1)
-
 
 plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass, 
                                  trained_models_2 = trained_models_subclass_LDA,
@@ -945,11 +1031,17 @@ plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass,
 
 ################################################################################
 ################################################################################
+# define new features which make physical sense
 train_set <- train_set %>%
-  mutate(strain=wear*torque, delta_T= process_t-air_t, power=rpm*torque)
+  mutate(strain=wear*torque, # strain on the machine
+         delta_T= process_t-air_t, # temperature difference
+         power=rpm*torque) # power 
 
+# define the same features for the test set
 test_set <- test_set %>%
-  mutate(strain=wear*torque, delta_T= process_t-air_t, power=rpm*torque)
+  mutate(strain=wear*torque, 
+         delta_T= process_t-air_t, 
+         power=rpm*torque)
 
 
 # methods and respective names to train models
@@ -961,15 +1053,13 @@ mehtod_names <- c("Decision tree", "Random forest", "LDA", "Penalized DA",
 my_features <- c("delta_T", "power", "strain", "rpm", "torque", 
                  "wear", "type_H", "type_L", "type_M")
 
-my_target   <- "failure_type"
-
-
+my_multiclass_target   <- "failure_type"
 
 # train the models in lapply
 trained_models_subclass_physical_features <- lapply(methods, function(method){
   print(method)
   model <- train_model(df_training=train_set, 
-                       target=my_target,
+                       target=my_multiclass_target,
                        features=my_features, 
                        method=method,
                        control=ctrl)
@@ -980,35 +1070,84 @@ trained_models_subclass_physical_features <- lapply(methods, function(method){
 plot_ROC_curves(trained_models=trained_models_subclass_physical_features,
                 model_names=mehtod_names, 
                 df_test=test_set, 
-                target="failure") 
+                target=my_binary_target) 
+
+##
+# get new tpr scores at 10% fpr
+new_tpr_row <- unname(sapply(methods, function(method){
+  tpr <- get_tpr_at_x_fpr(trained_models_subclass_physical_features[[which(methods==method)]],
+                          df_test=test_set, 
+                          target=my_binary_target, x=0.1)
+  round(tpr, 4)}))
+
+# add them to the table
+tpr_table <- rbind(tpr_table, new_tpr_row)    
+rownames(tpr_table)[nrow(tpr_table)] <- "multiclass with feature engineering"
+tpr_table
+
+##
+# get new f1-scores
+new_f1_row <- unname(
+  sapply(methods, function(method){
+    f1 <- get_f1_score(
+      conver_to_binary_confusion_matrix(
+        get_confusion_matrix(
+          trained_models_subclass_physical_features[[which(methods==method)]],
+          df_test=test_set,
+          target=my_multiclass_target)$table))
+    round(f1, 4)}))
+
+# add them to the table
+f1_table <- rbind(f1_table, new_f1_row)    
+rownames(f1_table)[nrow(f1_table)] <- "multiclass with feature engineering"
+f1_table
+
+
+# compare the ROC curves of new approach to the ones of original multiclass models
+plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass, 
+                                 trained_models_2 = trained_models_subclass_physical_features,
+                                 set_1_description = "multiclass",
+                                 set_2_description = "multiclass physical features",
+                                 method_names = c("rf","xgbTree"),
+                                 model_names = c("Random forest", "XGBoost"), 
+                                 df_test=test_set,
+                                 target=my_binary_target)
 
 # show confusion matrix for XGboost and random forest
 get_confusion_matrix(trained_models_subclass_physical_features[[which(methods=="xgbTree")]],
                      df_test=test_set,
-                     target="failure_type")$table
+                     target=my_multiclass_target)$table
 
 get_confusion_matrix(trained_models_subclass_physical_features[[which(methods=="rf")]],
                      df_test=test_set,
-                     target="failure_type")$table
+                     target=my_multiclass_target)$table
 
-# get our metric
-get_tpr_at_x_fpr(trained_models_subclass_physical_features[[which(methods=="xgbTree")]],
-                 df_test=test_set, 
-                 target="failure", x=0.1)
+################################################################################
+################################################################################
+# Ensemble 
 
-get_tpr_at_x_fpr(trained_models_subclass_physical_features[[which(methods=="rf")]],
-                 df_test=test_set,
-                 target="failure", x=0.1)
+# models to be used in ensemble
+ensemble_methods <- c("rf","xgbTree", "LogitBoost")
 
-# ensemble next!
+# predict based on voting of models in ensemble
+ensemble_predictions <- predict_ensemble(
+  models=trained_models_subclass_physical_features, 
+  ensemble_methods=ensemble_methods,
+  new_data=test_set)
 
+# make sure ensemble output as same factor levels
+ensemble_predictions <- factor(ensemble_predictions, 
+                               levels = c(levels(test_set$failure_type)))
 
+# make confusion table for multiclass
+ensemble_prediction_table <- table(ensemble_predictions, test_set$failure_type)
 
+# convert multiclass to binary confusion matrix
+binary_confusion_matrix <- conver_to_binary_confusion_matrix(ensemble_prediction_table)
+binary_confusion_matrix
 
-
-
-
-
+# calculate f1-score
+get_f1_score(binary_confusion_matrix)
 
 
 
