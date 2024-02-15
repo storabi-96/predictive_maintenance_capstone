@@ -89,12 +89,12 @@ get_tpr_at_x_fpr <- function(model, df_test, target, x=0.1) {
   approx_tpr
 }
 ################################################################################
-plot_ROC_curves <- function(trained_models, model_names, df_test, target) {
+plot_ROC_curves <- function(trained_models, model_names, df_test, target, title) {
   
   # Create an empty plot
   plot(0, 0, type = "n", xlim = c(0, 1), ylim = c(0, 1), 
        xlab = "False Positive Rate", ylab = "True Positive Rate", 
-       main = "ROC curves comparison")
+       main = title)
   
   grid(col = "grey", lty = "dotted")
   # Plot ROC curves for each model
@@ -207,15 +207,15 @@ smote_for_failure_type <- function(train_data, target_col, positive_class,
   majority_class <- names(which.max(failure_type_freq))
   
   # Find minority Failure types, exclude the most common one (No Failure)
-  failure_types <- names(failure_type_freq[failure_type_freq != majority_class])
-  
+  #failure_types <- names(failure_type_freq[failure_type_freq != majority_class])
+  failure_types <- setdiff(names(failure_type_freq), c(majority_class))
   # Perform SMOTE for each minority Failure type
   df_smote <- list()
   i <- 1
   for (failure_type in failure_types) {
     # Subset the data for the current Failure type
     subset_data <- train_data[train_failure_type == failure_type |
-                                train_failure_type == majority_class, ]
+                              train_failure_type == majority_class, ]
     
     # find the correct dupsize based on the desired subclass population
     dupsize <- apprx_subclass_pop/failure_type_freq[[failure_type]]
@@ -271,7 +271,8 @@ DBSMOTE_for_failure_type <- function(train_data, target_col, positive_class,
   majority_class <- names(which.max(failure_type_freq))
   
   # Find minority Failure types, exclude the most common one (No Failure)
-  failure_types <- names(failure_type_freq[failure_type_freq != majority_class])
+  #failure_types <- names(failure_type_freq[failure_type_freq != majority_class])
+  failure_types <- setdiff(names(failure_type_freq), c(majority_class))
   
   # Perform SMOTE for each minority Failure type
   df_smote <- list()
@@ -648,8 +649,6 @@ plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_binary,
                                  method_names = c("rf","xgbTree"),
                                  model_names = c("Random forest", "XGBoost"), 
                                  df_test=test_set, target=my_binary_target)
-
-
 
 get_confusion_matrix(trained_models_multiclass[[which(methods=="rf")]],
                      df_test=test_set,
@@ -1147,5 +1146,15 @@ binary_confusion_matrix
 get_f1_score(binary_confusion_matrix)
 
 
+# plot F1-scores
+max_F1s <- apply(f1_table, 1, max, na.rm = TRUE)
+max_F1s <- unname(max_F1s)
+max_F1s <- c(max_F1s, get_f1_score(binary_confusion_matrix))
+
+plot(0, 0, type = "n", xlim = c(1, 8), ylim = c(0, 1), 
+     xlab = "Iteration", ylab = "F1-score", 
+     main = "Evolution of F1-scores for the best performing model in each iteration")
+grid(col = "grey", lty = "dotted")
+lines(max_F1s, col = "blue3", lwd = 2)
 
 
