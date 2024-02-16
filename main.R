@@ -543,7 +543,8 @@ trained_models_binary <- lapply(methods, function(method){
 plot_ROC_curves(trained_models=trained_models_binary,
                 model_names=mehtod_names, 
                 df_test=test_set, 
-                target=my_target) 
+                target=my_target,
+                title= "ROC curves comparison for binary classification") 
 
 ###
 # get our metric
@@ -610,7 +611,8 @@ trained_models_multiclass <- lapply(methods, function(method){
 plot_ROC_curves(trained_models=trained_models_multiclass,
                 model_names=mehtod_names, 
                 df_test=test_set, 
-                target=my_binary_target) 
+                target=my_binary_target, 
+                title="ROC curves comparison for multi-class classification") 
 
 ##
 # get new tpr scores at 10% fpr
@@ -699,7 +701,8 @@ trained_models_subclass_SMOTE <- lapply(methods, function(method){
 plot_ROC_curves(trained_models=trained_models_subclass_SMOTE,
                 model_names=mehtod_names, 
                 df_test=test_set, 
-                target=my_binary_target) 
+                target=my_binary_target,
+                title="ROC curves comparison for multi-class classification after SMOTE") 
 
 ##
 # get new tpr scores at 10% fpr
@@ -768,11 +771,11 @@ train_set_subclass_DBSMOTE <- DBSMOTE_for_failure_type(
   apprx_subclass_pop=n_subclass_synth)
 
 
-# show the resulting distribution of target column after SMOTE
+# show the resulting distribution of target column after DBSMOTE
 table(train_set$failure_type)
 table(train_set_subclass_DBSMOTE$failure_type)
 
-# train the models based on new training set from SMOTE
+# train the models based on new training set from DBSMOTE
 trained_models_subclass_DBSMOTE <- lapply(methods, function(method){
   print(method)
   model <- train_model(df_training=train_set_subclass_DBSMOTE, 
@@ -787,7 +790,8 @@ trained_models_subclass_DBSMOTE <- lapply(methods, function(method){
 plot_ROC_curves(trained_models=trained_models_subclass_DBSMOTE,
                 model_names=mehtod_names, 
                 df_test=test_set, 
-                target=my_binary_target) 
+                target=my_binary_target,
+                title="ROC curves comparison for multi-class classification after DBSMOTE") 
 
 ##
 # get new tpr scores at 10% fpr
@@ -847,7 +851,7 @@ train_set_subclass_DBSMOTE_ENN <- apply_ENN(df=train_set_subclass_DBSMOTE,
                                             target=my_multiclass_target,
                                             features=my_features)
 
-# show the resulting distribution of target column after SMOTE
+# show the resulting distribution of target column after DBSMOTE/ENN
 table(train_set_subclass_DBSMOTE$failure_type)
 table(train_set_subclass_DBSMOTE_ENN$failure_type)
 
@@ -866,7 +870,8 @@ trained_models_subclass_DBSMOTE_ENN <- lapply(methods, function(method){
 plot_ROC_curves(trained_models=trained_models_subclass_DBSMOTE_ENN,
                 model_names=mehtod_names, 
                 df_test=test_set, 
-                target=my_binary_target) 
+                target=my_binary_target, 
+                title="ROC curves comparison for multi-class classification after DBSMOTE + ENN") 
 
 ##
 # get new tpr scores at 10% fpr
@@ -927,17 +932,15 @@ lda_result <- MASS::lda(failure_type ~ ., data = train_set_pre_LDA)
 # access LDA results
 lda_result$scaling  # Linear discriminant coefficients
 
-
+# add target columns back to the projected dataset
 train_set_LDA <- data.frame(predict(lda_result, train_set_pre_LDA)$x)
 train_set_LDA[[my_binary_target]] <- train_set[[my_binary_target]]
 train_set_LDA[[my_multiclass_target]] <- train_set[[my_multiclass_target]]
-
 
 # transform the test set with the same coefficient
 test_set_LDA <- data.frame(predict(lda_result, test_set)$x)
 test_set_LDA[[my_binary_target]] <- test_set[[my_binary_target]]
 test_set_LDA[[my_multiclass_target]] <- test_set[[my_multiclass_target]]
-
 
 test_set_LDA %>% ggplot(aes(LD1, LD2, color=failure)) + geom_point(alpha=0.5)
 
@@ -960,9 +963,10 @@ trained_models_subclass_LDA <- lapply(new_methods, function(method){
 
 # plot the new ROC curves 
 plot_ROC_curves(trained_models=trained_models_subclass_LDA,
-                model_names=new_methods, 
+                model_names=new_mehtod_names, 
                 df_test=test_set_LDA, 
-                target=my_binary_target) 
+                target=my_binary_target,
+                title= "ROC curves comparison for multi-class classification in LD space") 
 
 ##
 # get new tpr scores at 10% fpr
@@ -1066,7 +1070,8 @@ trained_models_subclass_physical_features <- lapply(methods, function(method){
 plot_ROC_curves(trained_models=trained_models_subclass_physical_features,
                 model_names=mehtod_names, 
                 df_test=test_set, 
-                target=my_binary_target) 
+                target=my_binary_target, 
+                title="ROC curves comparison for multi-class classification using the new features") 
 
 ##
 # get new tpr scores at 10% fpr
@@ -1097,7 +1102,6 @@ new_f1_row <- unname(
 f1_table <- rbind(f1_table, new_f1_row)    
 rownames(f1_table)[nrow(f1_table)] <- "multiclass with feature engineering"
 f1_table
-
 
 # compare the ROC curves of new approach to the ones of original multiclass models
 plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_multiclass, 
@@ -1135,8 +1139,9 @@ ensemble_predictions <- predict_ensemble(
 ensemble_predictions <- factor(ensemble_predictions, 
                                levels = c(levels(test_set$failure_type)))
 
-# make confusion table for multiclass
+# make confusion table for multiclass + new features
 ensemble_prediction_table <- table(ensemble_predictions, test_set$failure_type)
+ensemble_prediction_table
 
 # convert multiclass to binary confusion matrix
 binary_confusion_matrix <- conver_to_binary_confusion_matrix(ensemble_prediction_table)
@@ -1150,7 +1155,6 @@ get_f1_score(binary_confusion_matrix)
 max_F1s <- apply(f1_table, 1, max, na.rm = TRUE)
 max_F1s <- unname(max_F1s)
 max_F1s <- c(max_F1s, get_f1_score(binary_confusion_matrix))
-
 plot(0, 0, type = "n", xlim = c(1, 8), ylim = c(0, 1), 
      xlab = "Iteration", ylab = "F1-score", 
      main = "Evolution of F1-scores for the best performing model in each iteration")

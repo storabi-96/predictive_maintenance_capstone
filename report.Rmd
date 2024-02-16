@@ -2,7 +2,7 @@
 title: "Predictive Maintenance: Capstone Project Report"
 subtitle: "HarvardX PH125.9x - Data Science: Capstone"
 author: "Seyed M. Seyedtorabi"
-date: "2024-Feb-15"
+date: "2024-Feb-16"
 output: pdf_document
 ---
 
@@ -615,7 +615,7 @@ ctrl <- trainControl(method = "cv", number = 5)
 ## II.IV. Other Utilized Methods 
 To improve the performance of the models through different iterations of modelling, some additional techniques are used int this project. Here, we list these methods and provide a short description for each one:
 
-**1) Synthetic Minority Oversampling Technique (SMOTE)**: A technique to generate synthetic data for the minority class in unbalanced data sets by interpolating between the existing instances of the minority class.\newline
+**1) Synthetic Minority Oversampling Technique (SMOTE)**: A technique to generate synthetic data for the minority class in unbalanced data sets by interpolating between the existing instances of the minority class [4].\newline
 **2) Density Based Synthetic Minority Oversampling Technique (DBSMOTE)**: An extension of SMOTE where synthetic instances are created based on the density of the minority class in each region [2]. DBSMOTE tries to overcome some undesired artifact caused by SMOTE (e.g. building bridges of data points between instances of the minority class that are far away from the main cluster of minority class).\newline
 **3) Edited Nearest Neighbor (ENN)**: An undersampling method aimed at reducing the noise in the data by removing the instances which are surrounded by the "neighbors" from other classes [3]. \newline
 **4) Projection to LD space**: Projecting the feature space into a lower dimensional linear discriminant (LD) space to improve the separability of the classes and minimize the in-class variations.
@@ -727,7 +727,6 @@ invisible(capture.output(
 ))
 
 ```
-
 For evaluating the model performance, we will not distinguish between different positive classes (i.e. if the model detected the failure but the mode of the failure is wrong, we still count it as a true positive). Consequently, the ROC curves look like this:
 
 ```{r ROC for multiclass, echo=FALSE, fig.height=6, fig.width=10}
@@ -774,7 +773,6 @@ f1_table <- rbind(f1_table, new_f1_row)
 rownames(f1_table)[nrow(f1_table)] <- "multiclass classification"
 knitr::kable(f1_table)
 ```
-
 Here is the comparison of the ROC curves compared to the binary classification case:
 
 ```{r ROC comparison multicalss vs binray, echo=FALSE, fig.height=6, fig.width=10}
@@ -788,7 +786,6 @@ plot_ROC_curves_cross_comparison(trained_models_1 = trained_models_binary,
 ```
 
 To find out the weak point of our models, we can look at the confusion matrices for the best performing models. The following tables are the confusion matrices for the XGBoost and the random forest models respectively:
-
 ```{r confusion matrix multiclass, echo=FALSE}
 knitr::kable(
 get_confusion_matrix(trained_models_multiclass[[which(methods=="xgbTree")]],
@@ -807,13 +804,12 @@ It seems to be the case that the "Tool Wear Failure" is the most difficult type 
 
 ## III.III. Multi-Class Classification with SMOTE
 For applying SMOTE on our data set, we will use the "SMOTE" function of the "smotefamily" package in R. However, since this function is designed for binary classifications, we define another function that applies SMOTE to each minority class separately. Although we will oversample the minorities, it is not recommended to oversample them to the point of having a completely balanced data set. This is because some of the models use the a priori probabilities in their predictions, and since we are oversampling only in training set to avoid data leakage, once these models are employed to predict on the test set, they may have too many false positives. After applying SMOTE to our training set, we can see how the distribution of the minority classes has changed:
-```{r, smote parameters and stuff, include=FALSE}
+```{r, smote parameters and apply smote, include=FALSE}
 my_multiclass_target <- "failure_type"
 my_binary_target <- "failure"
 positive_class <- "Failure"
 n_subclass_synth <- 500
-```
-```{r applying smote and showing distribution, echo=TRUE}
+
 train_set_subclass_smote <- smote_for_failure_type(
   train_data=train_set, 
   target_col=my_binary_target, 
@@ -821,15 +817,17 @@ train_set_subclass_smote <- smote_for_failure_type(
   subclass_type_col=my_multiclass_target, 
   features_cols=my_features,
   apprx_subclass_pop=n_subclass_synth)
-
-# show the resulting distribution of target column after SMOTE
+```
+```{r showing distributions after smote, echo=TRUE}
+# before SMOTE
 knitr::kable(table(train_set$failure_type), 
              col.names = c("Failure Type","Count"))
+# after SMOTE
 knitr::kable(table(train_set_subclass_smote$failure_type), 
              col.names = c("Failure Type","Count"))
 ```
-
 As it can be seen, the distribution has changed and now we have around 500 positive sample for each minority class. After we train our models on this modified data set, we get the following ROC curves:
+
 ```{r training multiclass SMOTE, echo=FALSE, include=FALSE}
 # train the models based on new training set from SMOTE
 trained_models_subclass_SMOTE <- lapply(methods, function(method){
@@ -930,9 +928,10 @@ train_set_subclass_DBSMOTE <- DBSMOTE_for_failure_type(
   apprx_subclass_pop=n_subclass_synth)
 ```
 ```{r show distribution after DBSMOTE, echo=TRUE}
-# show the resulting distribution of target column after SMOTE
+# distribution before DBSMOTE
 knitr::kable(table(train_set$failure_type), 
              col.names = c("Failure Type","Count"))
+# distribution after DBSMOTE
 knitr::kable(table(train_set_subclass_DBSMOTE$failure_type), 
              col.names = c("Failure Type","Count"))
 ```
@@ -1029,9 +1028,10 @@ train_set_subclass_DBSMOTE_ENN <- apply_ENN(df=train_set_subclass_DBSMOTE,
 ```
 The distribution of failure type after applying ENN to the data set produced by DBSOMTE, we can see that some instances have been removed from the data set as expected.
 ```{r ENN distributions, echo=TRUE}
-# show the resulting distribution of target column after SMOTE
+# distribution before DBSMOTE/ENN
 knitr::kable(table(train_set_subclass_DBSMOTE$failure_type), 
              col.names = c("Failure Type","Count"))
+# distribution after DBSMOTE/ENN
 knitr::kable(table(train_set_subclass_DBSMOTE_ENN$failure_type), 
              col.names = c("Failure Type","Count"))
 ```
@@ -1070,7 +1070,7 @@ tpr_table <- rbind(tpr_table, new_tpr_row)
 rownames(tpr_table)[nrow(tpr_table)] <- "multiclass + DBSMOTE/ENN"
 knitr::kable(tpr_table)
 ```
-The following table compares contains the updated F1-scores after DBSOMTE/ENN. We can clearly see the decrease in performance for our best 2 models. Therfore, we will stop using this strategy (DBSMOTE+ENN).
+The following table compares contains the updated F1-scores after DBSOMTE/ENN. We can clearly see the decrease in performance for our best 2 models. Therefore, we will stop using this strategy (DBSMOTE+ENN).
 ```{r F1 ENN, echo=FALSE}
 # get new f1-scores
 new_f1_row <- unname(
@@ -1165,14 +1165,14 @@ trained_models_subclass_LDA <- lapply(new_methods, function(method){
 ```{r ROC LD space, echo=FALSE, fig.height=6, fig.width=10}
 # plot the new ROC curves 
 plot_ROC_curves(trained_models=trained_models_subclass_LDA,
-                model_names=new_methods, 
+                model_names=new_mehtod_names, 
                 df_test=test_set_LDA, 
                 target=my_binary_target,
                 title= "ROC curves comparison for multi-class classification in LD space") 
 
 ```
 
-It does not seem like an improvement. We can confirm that by looking into our metrics. The table below shows the TPR at 10% FPR:
+It is not clear if we have an improvement. We can find out about that by looking into our metrics. The table below shows the TPR at 10% FPR:
 ```{r LD TPR, echo=FALSE}
 # get new tpr scores at 10% fpr
 new_tpr_row <- unname(sapply(seq_along(new_methods), function(i){
@@ -1372,7 +1372,7 @@ Since the final model is an ensemble of 3 models, it would be a cumbersome opera
 \newpage
 
 # IV. Conclusions
-In this project, we developed the basis for a predictive maintenance model for industrial machines give in our data set. Firstly, we investigated the data set, observed the unbalance within the target columns, and did some data cleaning. Then, we carried out an exploratory data analysis (EDA) and made the necessary visualizations on the data set to find out about correlations within our data set. Then we started training models using 7 different ML algorithms. We applied different techniques such as SMOTE, DBSMOTE, ENN, projection onto LD space, and feature engineering in order to enhance our model performance and the F1-score. Once we brought the F1-score to the desired level, we created and ensemble of our best models and presented the results for the final model. The final model has perfect prediction capabilities with the exception of 1 failure class. To improve this, one can try to train better models by defining the proper grid search parameters and tuning the hyper parameters of the model. Another possible way to improve the model would be to create a digital twin of the monitored system and to generate synthetic data for the failure case which is difficult to detect. This approach will probably result in better synthetic samples than the ones generated by SMOTE or DBSMOTE. 
+In this project, we developed the basis for a predictive maintenance model for industrial machines given in our data set. Firstly, we investigated the data set, observed the unbalance within the target columns, and did some data cleaning. Then, we carried out an exploratory data analysis (EDA) and made the necessary visualizations on the data set to find out about correlations within our data set. Then we started training models using 7 different ML algorithms. We applied different techniques such as SMOTE, DBSMOTE, ENN, projection onto LD space, and feature engineering in order to enhance our model performance and the F1-score. Once we brought the F1-score to the desired level, we created an ensemble of our best models and presented the results for the final model. The final model demonstrates perfect prediction capabilities on the test set with the exception the of "Tool Wear Failure" class. To improve this, one can try to train better models by defining the proper grid search parameters and tuning the hyper parameters of the model. Another possible way to improve the model would be to create a digital twin simulation model of the monitored system based on physical principles and use it to generate synthetic data for the failure class which is difficult to detect. This approach will probably result in better synthetic samples than the ones generated by SMOTE or DBSMOTE. 
 
 \newpage
 
@@ -1380,7 +1380,9 @@ In this project, we developed the basis for a predictive maintenance model for i
 
 [1] https://www.kaggle.com/datasets/shivamb/machine-predictive-maintenance-classification (accessed on 15.02.2024, at 20:37 CET)
 
-[2] Bunkhumpornpat, C., Sinapiromsaran, K. & Lursinsap, C. DBSMOTE: Density-Based Synthetic Minority Over-sampling TEchnique. Appl Intell 36, 664–684 (2012). https://doi.org/10.1007/s10489-011-0287-y
+[2] Bunkhumpornpat, C., Sinapiromsaran, K. & Lursinsap, C. DBSMOTE: "Density-Based Synthetic Minority Over-sampling TEchnique." Appl Intell 36, 664–684 (2012). https://doi.org/10.1007/s10489-011-0287-y
 
 [3] Wilson, Dennis L.. “Asymptotic Properties of Nearest Neighbor Rules Using Edited Data.” IEEE Trans. Syst. Man Cybern. 2 (1972): 408-421.
+
+[4] N. V. Chawla, K. W. Bowyer, L. O. Hall, W. P. Kegelmeyer "SMOTE: Synthetic Minority Over-sampling Technique." Journal Of Artificial Intelligence Research, Volume 16, pages 321-357, 2002
 
